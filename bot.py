@@ -23,7 +23,7 @@ CONFIG_FILE = "config.json"
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
 
     return {
@@ -33,7 +33,7 @@ def load_config():
 
 
 def save_config(data):
-    with open(CONFIG_FILE, "w") as f:
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
 
@@ -53,10 +53,12 @@ async def setpedidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config["pedidos_chat"] = chat_id
     save_config(config)
 
-    await update.message.reply_text("✅ Chat general de pedidos configurado.")
+    await update.message.reply_text(
+        "✅ Chat general de pedidos configurado."
+    )
 
 
-# 📦 DESTINO (THREAD)
+# 📦 DESTINO (TEMA)
 async def setdestino(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thread_id = update.message.message_thread_id
 
@@ -69,7 +71,9 @@ async def setdestino(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config["destino_thread"] = thread_id
     save_config(config)
 
-    await update.message.reply_text("✅ Tema destino configurado.")
+    await update.message.reply_text(
+        "✅ Tema destino configurado."
+    )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -81,7 +85,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------- CORE LOGIC ----------------
 
-async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def process_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     message = update.message
 
     if not message:
@@ -93,17 +100,18 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not pedidos_chat or not destino_thread:
         return
 
-    # SOLO chat general
+    # Solo actuar en el chat configurado
     if message.chat_id != pedidos_chat:
         return
 
     text = message.caption or message.text or ""
+
     if not text:
         return
 
     bot_username = context.bot.username.lower()
 
-    # debe mencionar al bot
+    # Debe mencionar al bot
     if f"@{bot_username}" not in text.lower():
         return
 
@@ -113,46 +121,68 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else message.from_user.first_name
     )
 
-    # validar imagen
+    # Debe tener imagen
     if not message.photo:
         try:
             await message.delete()
-        except:
+        except Exception:
             pass
 
         await context.bot.send_message(
             chat_id=message.chat_id,
-            text=f"{username} ❌ Debes incluir imagen y descripción."
+            text=(
+                f"{username} ❌ Pedido inválido.\n"
+                "Debe incluir una imagen y una descripción."
+            )
         )
         return
 
-    # limpiar mención del bot
+    # Quitar la mención del bot
     clean_text = re.sub(
         rf"@{re.escape(bot_username)}",
         "",
         text,
-        flags=re.IGNORECASE
+        flags=re.IGNORECASE,
     ).strip()
 
-    final_caption = f"{clean_text}\n\nPedido realizado por {username}"
+    # Debe quedar descripción real
+    if not clean_text:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        await context.bot.send_message(
+            chat_id=message.chat_id,
+            text=(
+                f"{username} ❌ Pedido inválido.\n"
+                "Debes añadir una descripción además de mencionar al bot."
+            )
+        )
+        return
+
+    final_caption = (
+        f"{clean_text}\n\n"
+        f"Pedido realizado por {username}"
+    )
 
     photo = message.photo[-1].file_id
 
-    # enviar al tema destino
+    # Enviar al tema destino
     await context.bot.send_photo(
         chat_id=message.chat_id,
         message_thread_id=destino_thread,
         photo=photo,
-        caption=final_caption
+        caption=final_caption,
     )
 
-    # borrar mensaje original
+    # Borrar mensaje original
     try:
         await message.delete()
-    except:
+    except Exception:
         pass
 
-    # confirmación
+    # Confirmación
     await context.bot.send_message(
         chat_id=message.chat_id,
         text=f"{username} ✅ Pedido realizado."
@@ -169,7 +199,12 @@ def main():
     app.add_handler(CommandHandler("setdestino", setdestino))
     app.add_handler(CommandHandler("status", status))
 
-    app.add_handler(MessageHandler(filters.ALL, process_message))
+    app.add_handler(
+        MessageHandler(
+            filters.ALL,
+            process_message
+        )
+    )
 
     print("🤖 Bot iniciado...")
     app.run_polling()

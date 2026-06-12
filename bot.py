@@ -46,33 +46,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot de pedidos activo.")
 
 
-# 📌 CHAT GENERAL
-async def setpedidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-
-    config["pedidos_chat"] = chat_id
-    save_config(config)
-
-    await update.message.reply_text(
-        "✅ Chat general de pedidos configurado."
-    )
-
-
-# 📦 DESTINO (TEMA)
 async def setdestino(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thread_id = update.message.message_thread_id
 
     if not thread_id:
         await update.message.reply_text(
-            "❌ Este comando debe ejecutarse dentro de un tema."
+            "❌ Este comando debe ejecutarse dentro del tema destino."
         )
         return
 
+    config["pedidos_chat"] = update.message.chat_id
     config["destino_thread"] = thread_id
+
     save_config(config)
 
     await update.message.reply_text(
-        "✅ Tema destino configurado."
+        "✅ Destino configurado correctamente."
     )
 
 
@@ -94,14 +83,21 @@ async def process_message(
     if not message:
         return
 
+    if message.from_user and message.from_user.is_bot:
+        return
+
     pedidos_chat = config.get("pedidos_chat")
     destino_thread = config.get("destino_thread")
 
     if not pedidos_chat or not destino_thread:
         return
 
-    # Solo actuar en el chat configurado
+    # Solo actuar en el grupo configurado
     if message.chat_id != pedidos_chat:
+        return
+
+    # Ignorar mensajes enviados dentro de temas
+    if message.message_thread_id is not None:
         return
 
     text = message.caption or message.text or ""
@@ -137,7 +133,7 @@ async def process_message(
         )
         return
 
-    # Quitar la mención del bot
+    # Quitar mención del bot
     clean_text = re.sub(
         rf"@{re.escape(bot_username)}",
         "",
@@ -195,7 +191,6 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setpedidos", setpedidos))
     app.add_handler(CommandHandler("setdestino", setdestino))
     app.add_handler(CommandHandler("status", status))
 

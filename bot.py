@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import logging
 
 from dotenv import load_dotenv
 
@@ -17,6 +18,14 @@ load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 CONFIG_FILE = "config.json"
+
+# ---------------- LOGGING ----------------
+
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+log = logging.getLogger("bot_pedidos")
 
 
 # ---------------- CONFIG ----------------
@@ -60,15 +69,23 @@ async def setdestino(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_config(config)
 
+    log.info(
+        "Destino configurado: chat=%s thread=%s",
+        update.message.chat_id, thread_id,
+    )
+
     await update.message.reply_text(
-        "✅ Destino configurado correctamente."
+        f"✅ Destino configurado.\n"
+        f"Chat: {update.message.chat_id}\n"
+        f"Tema: {thread_id}"
     )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"📌 Chat pedidos: {config['pedidos_chat']}\n"
-        f"📦 Tema destino: {config['destino_thread']}"
+        f"📦 Tema destino: {config['destino_thread']}\n"
+        f"🆔 Este chat: {update.message.chat_id}"
     )
 
 
@@ -78,10 +95,18 @@ async def process_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    message = update.message
+    message = update.effective_message
 
     if not message:
         return
+
+    log.info(
+        "Mensaje recibido | chat=%s thread=%s foto=%s texto=%r",
+        message.chat_id,
+        message.message_thread_id,
+        bool(message.photo),
+        (message.caption or message.text or "")[:50],
+    )
 
     if message.from_user and message.from_user.is_bot:
         return
@@ -90,14 +115,20 @@ async def process_message(
     destino_thread = config.get("destino_thread")
 
     if not pedidos_chat or not destino_thread:
+        log.warning("Sin configurar. Ejecuta /setdestino en el tema destino.")
         return
 
     # Solo actuar en el grupo configurado
     if message.chat_id != pedidos_chat:
+        log.warning(
+            "Chat distinto al configurado: recibido=%s esperado=%s "
+            "(si activaste temas, el chat_id cambió: vuelve a ejecutar /setdestino)",
+            message.chat_id, pedidos_chat,
+        )
         return
 
-    # Ignorar mensajes enviados dentro de temas
-    if message.message_thread_id is not None:
+    # No procesar mensajes del propio tema destino (evitar bucles)
+    if message.message_thread_id == destino_thread:
         return
 
     text = message.caption or message.text or ""
@@ -107,9 +138,11 @@ async def process_message(
 
     bot_username = context.bot.username.lower()
 
-    # Debe mencionar al bot
+    # Debe mencionar al bot (por texto o por entidad de mención)
     if f"@{bot_username}" not in text.lower():
         return
+
+    log.info("Mención detectada, procesando pedido...")
 
     username = (
         f"@{message.from_user.username}"
@@ -121,11 +154,11 @@ async def process_message(
     if not message.photo:
         try:
             await message.delete()
-        except Exception:
-            pass
-
-        await context.bot.send_message(
+        except Exception as e:
+            log.warning("No pude borrar el mensaje: %s", e)
+            await context.bot.send_message(
             chat_id=message.chat_id,
+            message_thread_id=message.message_thread_id,
             text=(
                 f"{username} ❌ Pedido inválido.\n"
                 "Debe incluir una imagen y una descripción."
@@ -145,11 +178,12 @@ async def process_message(
     if not clean_text:
         try:
             await message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("No pude borrar el mensaje: %s", e)
 
         await context.bot.send_message(
             chat_id=message.chat_id,
+            message_thread_id=message.message_thread_id,
             text=(
                 f"{username} ❌ Pedido inválido.\n"
                 "Debes añadir una descripción además de mencionar al bot."
@@ -172,15 +206,18 @@ async def process_message(
         caption=final_caption,
     )
 
+    log.info("Pedido enviado al tema destino %s", destino_thread)
+
     # Borrar mensaje original
     try:
         await message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("No pude borrar el original: %s", e)
 
     # Confirmación
     await context.bot.send_message(
         chat_id=message.chat_id,
+        message_thread_id=message.message_thread_id,
         text=f"{username} ✅ Pedido realizado."
     )
 
@@ -202,7 +239,7 @@ def main():
     )
 
     print("🤖 Bot iniciado...")
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
